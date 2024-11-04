@@ -71,6 +71,13 @@ typedef struct Vulkan
     VkCommandPool command_pool;
     VkCommandBuffer command_buffer;
 
+    VkFormat image_format;
+    VkSurfaceKHR surface;
+    VkSwapchainKHR swapchain;
+    VkSampleCountFlagBits sample_count;
+
+    VkRenderPass render_pass;
+
     VkFence fence;
     VkSemaphore wait_semaphore;
     VkSemaphore signal_semaphore;
@@ -171,7 +178,7 @@ VkInstance vulkan_create_instance(void)
         .pNext = &debug_create_info,
         .pApplicationInfo = &application_info,
         .enabledLayerCount = 1,
-        .ppEnabledLayerNames = validations, 
+        .ppEnabledLayerNames = validations,
         .enabledExtensionCount = ARRAY_SIZE(extensions),
         .ppEnabledExtensionNames = extensions,
     };
@@ -258,7 +265,10 @@ PhysicalDeviceReturnValues vulkan_get_physical_device(const Vulkan* vulkan)
     output_debug_string("\tPicked device: %s\n", physical_device_properties.deviceName);
 
     free(physical_devices);
-    return (PhysicalDeviceReturnValues){ physical_device, graphic_index };
+    return (PhysicalDeviceReturnValues){
+        .physical_device = physical_device,
+        .graphic_index = graphic_index,
+    };
 }
 
 VkDevice vulkan_create_device(const Vulkan* vulkan)
@@ -270,10 +280,14 @@ VkDevice vulkan_create_device(const Vulkan* vulkan)
         .queueCount = 1,
         .pQueuePriorities = &queue_priorities,
     };
+
+    const char* extensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
     const VkDeviceCreateInfo device_create_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &queue_create_info,
+        .enabledExtensionCount = ARRAY_SIZE(extensions),
+        .ppEnabledExtensionNames = extensions,
     };
     VkDevice device = VK_NULL_HANDLE;
     VK_ASSERT(vkCreateDevice(vulkan->physical_device, &device_create_info, NULL, &device));
@@ -327,6 +341,108 @@ VkSemaphore vulkan_create_semaphore(const Vulkan* vulkan)
     return semaphore;
 }
 
+
+VkSurfaceKHR vulkan_create_surface(const Vulkan* vulkan, HINSTANCE instance, HWND window)
+{
+    VkWin32SurfaceCreateInfoKHR create_info = {
+        .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+        .hinstance = instance,
+        .hwnd = window,
+    };
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateWin32SurfaceKHR(vulkan->instance, &create_info, NULL, &surface));
+    return surface;
+}
+
+VkSurfaceFormatKHR vulkan_get_surface_format(const Vulkan* vulkan)
+{
+
+    uint32_t surface_formats_count = 0;
+    VK_ASSERT(vkGetPhysicalDeviceSurfaceFormatsKHR(vulkan->physical_device, vulkan->surface,
+                                                   &surface_formats_count, NULL));
+    VkSurfaceFormatKHR* surface_formats = calloc(surface_formats_count, sizeof(VkSurfaceFormatKHR));
+    VK_ASSERT(vkGetPhysicalDeviceSurfaceFormatsKHR(vulkan->physical_device, vulkan->surface,
+                                                   &surface_formats_count, surface_formats));
+
+    VkSurfaceFormatKHR surface_format_to_use = surface_formats[0];
+    for (uint32_t index = 0; index < surface_formats_count; ++index)
+    {
+        const VkSurfaceFormatKHR* surface_format = surface_formats + index;
+        if (surface_format->format == VK_FORMAT_B8G8R8A8_SRGB &&
+            surface_format->colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        {
+            surface_format_to_use = *surface_format;
+            break;
+        }
+    }
+    free(surface_formats);
+    return surface_format_to_use;
+}
+
+VkSwapchainKHR vulkan_create_swapchain(const Vulkan* vulkan, VkColorSpaceKHR color_space)
+{
+    VkSurfaceCapabilitiesKHR surface_capabilities = { 0 };
+    VK_ASSERT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vulkan->physical_device, vulkan->surface,
+                                                        &surface_capabilities));
+
+    ASSERT(surface_capabilities.maxImageCount > 0);
+
+    VkSwapchainCreateInfoKHR create_info = {
+        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .surface = vulkan->surface,
+        .minImageCount = surface_capabilities.minImageCount + 1,
+        .imageFormat = vulkan->image_format,
+        .imageColorSpace = color_space,
+        .imageExtent = surface_capabilities.currentExtent,
+        .imageArrayLayers = 1,
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 1,
+        .pQueueFamilyIndices = &vulkan->graphic_index,
+        .preTransform = surface_capabilities.currentTransform,
+        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .presentMode = VK_PRESENT_MODE_FIFO_KHR,
+        .oldSwapchain = VK_NULL_HANDLE,
+    };
+    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateSwapchainKHR(vulkan->device, &create_info, NULL, &swapchain));
+    return swapchain;
+}
+
+VkRenderPass vulkan_create_render_pass(const Vulkan* vulkan)
+{
+    VkAttachmentDescription color_attachment = {
+        .format = vulkan->image_format,
+        .samples = vulkan->sample_count, 
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+
+    VkAttachmentReference color_reference = {
+        .attachment = 0,
+        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+    VkSubpassDescription subpass = {
+       .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS, 
+       .colorAttachmentCount = 1,
+       .pColorAttachments = &color_reference,
+    };
+    VkRenderPassCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .attachmentCount = 1,
+        .pAttachments = &color_attachment,
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+    };
+    VkRenderPass render_pass = VK_NULL_HANDLE;
+    VK_ASSERT(vkCreateRenderPass(vulkan->device, &create_info, NULL, &render_pass));
+    return render_pass;
+}
+
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int show_cmd)
 {
     WNDCLASS window_class = {
@@ -357,6 +473,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         vulkan.wait_semaphore = vulkan_create_semaphore(&vulkan);
         vulkan.signal_semaphore = vulkan_create_semaphore(&vulkan);
 
+        vulkan.surface = vulkan_create_surface(&vulkan, instance, window);
+        VkSurfaceFormatKHR surface_format = vulkan_get_surface_format(&vulkan);
+        vulkan.image_format = surface_format.format;
+        vulkan.swapchain = vulkan_create_swapchain(&vulkan, surface_format.colorSpace);
+        vulkan.sample_count = VK_SAMPLE_COUNT_1_BIT;
+        vulkan.render_pass = vulkan_create_render_pass(&vulkan);
+
         const double target_time = 0.016;
         double delta_time = target_time;
         double last_time = get_time();
@@ -380,8 +503,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
                 delta_time = current_time - last_time;
             }
 
-            //output_debug_string("Delta: %f\n", delta_time);
-            //output_debug_string("Target: %f\n", target_time);
+            // output_debug_string("Delta: %f\n", delta_time);
+            // output_debug_string("Target: %f\n", target_time);
 
             last_time = current_time;
         }
