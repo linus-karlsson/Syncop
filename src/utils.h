@@ -3,6 +3,18 @@
 #include <stdint.h>
 #endif
 
+#define global static
+#define presist static
+#define internal static
+
+#define ASSERT(expression)                                                          \
+    if (!(expression)) (*(uint32_t*)0 = 0)
+#define VK_ASSERT(function)                                                         \
+    {                                                                               \
+        ASSERT((function) == VK_SUCCESS);                                           \
+    }
+#define ARRAY_SIZE(array) (sizeof(array) / sizeof(array[0]))
+
 #define array_create_d(array) array_create(array, 10)
 #define array_create(array, array_capacity)                                         \
     do                                                                              \

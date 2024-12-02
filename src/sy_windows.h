@@ -746,3 +746,12 @@ void GetSystemTimeAsFileTime(LPFILETIME lpSystemTimeAsFileTime);
 BOOL WINAPI DestroyWindow(HWND hWnd);
 
 BOOL WINAPI ShowWindow(HWND hWnd, int nCmdShow);
+
+
+HMODULE WINAPI LoadLibraryA(LPCSTR lpLibFileName);
+HMODULE WINAPI LoadLibraryW(LPCWSTR lpLibFileName);
+#ifdef UNICODE
+#define LoadLibrary LoadLibraryW
+#else
+#define LoadLibrary LoadLibraryA
+#endif // !UNICODE

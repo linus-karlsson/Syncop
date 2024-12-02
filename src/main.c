@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
-#if 0
+#if 1
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #else
@@ -21,56 +21,8 @@
 #endif
 #include "math/syn_math.h"
 
-#define global static
-#define presist static
-#define internal static
-
-#define ASSERT(expression)                                                          \
-    if (!(expression)) (*(uint32_t*)0 = 0)
-#define VK_ASSERT(function)                                                         \
-    {                                                                               \
-        ASSERT((function) == VK_SUCCESS);                                           \
-    }
-#define ARRAY_SIZE(array) (sizeof(array) / sizeof(array[0]))
-
-typedef struct Vertex
-{
-    V4 color;
-    V2 position;
-} Vertex;
-
-typedef struct VertexArray
-{
-    uint32_t size;
-    uint32_t capacity;
-    Vertex* data;
-} VertexArray;
-
-typedef struct U32Array
-{
-    uint32_t size;
-    uint32_t capacity;
-    uint32_t* data;
-} U32Array, IndexArray;
-
-typedef struct Buffer
-{
-    VkBuffer buffer;
-    VkDeviceMemory memory;
-    VkDeviceSize size_in_bytes;
-} Buffer;
-
-typedef struct VertexBuffer
-{
-    Buffer buffer;
-    VertexArray array;
-} VertexBuffer;
-
-typedef struct IndexBuffer
-{
-    Buffer buffer;
-    IndexArray array;
-} IndexBuffer;
+#include "vulkan.h"
+#include "game.h"
 
 global bool g_running;
 global uint32_t g_width;
@@ -122,33 +74,6 @@ void output_debug_string(const char* format, ...)
 
     va_end(args);
 }
-
-typedef struct Vulkan
-{
-    VkInstance instance;
-    VkDebugUtilsMessengerEXT debug_messenger;
-    VkDevice device;
-    VkPhysicalDevice physical_device;
-    VkCommandPool command_pool;
-    VkCommandBuffer command_buffer;
-
-    VkFormat image_format;
-    VkSurfaceKHR surface;
-    VkSwapchainKHR swapchain;
-    VkSampleCountFlagBits sample_count;
-
-    uint32_t swapchain_image_count;
-    VkImage* swapchain_images;
-    VkImageView* swapchain_image_views;
-    VkFramebuffer* frame_buffers;
-    VkRenderPass render_pass;
-
-    VkFence fence;
-    VkSemaphore wait_semaphore;
-    VkSemaphore signal_semaphore;
-
-    uint32_t graphic_index;
-} Vulkan;
 
 char* debug_format_error_message(const char* message)
 {
@@ -281,11 +206,6 @@ VkDebugUtilsMessengerEXT vulkan_initialize_debug_messages(const Vulkan* vulkan)
     return debug_messenger;
 }
 
-typedef struct PhysicalDeviceReturnValues
-{
-    VkPhysicalDevice physical_device;
-    uint32_t graphic_index;
-} PhysicalDeviceReturnValues;
 PhysicalDeviceReturnValues vulkan_get_physical_device(const Vulkan* vulkan)
 {
     uint32_t physical_device_count = 0;
@@ -492,12 +412,6 @@ VkSwapchainKHR vulkan_create_swapchain(const Vulkan* vulkan,
     return swapchain;
 }
 
-typedef struct SwapchainImageReturn
-{
-    uint32_t count;
-    VkImage* images;
-} SwapchainImageReturn;
-
 SwapchainImageReturn vulkan_get_swapchain_images(const Vulkan* vulkan)
 {
     uint32_t image_count = 0;
@@ -619,276 +533,98 @@ VkFramebuffer vulkan_create_frame_buffer(const Vulkan* vulkan,
     return frame_buffer;
 }
 
-VkPipeline vulkan_create_graphic_pipeline(const Vulkan* vulkan,
-                                          const char* vertex_shader_file_name,
-                                          const char* fragment_shader_file_name,
-                                          uint32_t width, uint32_t height)
+Vulkan vulkan_create(HINSTANCE instance, HWND window)
 {
-    FileData vertex_shader_file = utils_read_file(vertex_shader_file_name);
-    FileData fragment_shader_file = utils_read_file(fragment_shader_file_name);
+    Vulkan vulkan = { 0 };
+    vulkan.instance = vulkan_create_instance();
+    vulkan.debug_messenger = vulkan_initialize_debug_messages(&vulkan);
+    PhysicalDeviceReturnValues pdrv = vulkan_get_physical_device(&vulkan);
+    vulkan.physical_device = pdrv.physical_device;
+    vulkan.graphic_index = pdrv.graphic_index;
+    vulkan.device = vulkan_create_device(&vulkan);
+    vulkan.command_pool = vulkan_creata_command_pool(&vulkan);
+    vulkan.command_buffer = vulkan_allocate_command_buffer(&vulkan);
+    vulkan.fence = vulkan_create_fence(&vulkan);
+    vulkan.wait_semaphore = vulkan_create_semaphore(&vulkan);
+    vulkan.signal_semaphore = vulkan_create_semaphore(&vulkan);
 
-    VkShaderModuleCreateInfo vertex_shader_info = {
-        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-        .codeSize = (size_t)vertex_shader_file.size,
-        .pCode = (uint32_t*)vertex_shader_file.data,
-    };
+    vulkan.surface = vulkan_create_surface(&vulkan, instance, window);
+    VkSurfaceFormatKHR surface_format = vulkan_get_surface_format(&vulkan);
+    vulkan.image_format = surface_format.format;
+    vulkan.swapchain = vulkan_create_swapchain(&vulkan, surface_format.colorSpace);
+    SwapchainImageReturn swapchain_images = vulkan_get_swapchain_images(&vulkan);
+    vulkan.swapchain_images = swapchain_images.images;
+    vulkan.swapchain_image_count = swapchain_images.count;
 
-    VkShaderModuleCreateInfo fragment_shader_info = {
-        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-        .codeSize = (size_t)fragment_shader_file.size,
-        .pCode = (uint32_t*)fragment_shader_file.data,
-    };
+    vulkan.sample_count = VK_SAMPLE_COUNT_1_BIT;
+    vulkan.render_pass = vulkan_create_render_pass(&vulkan);
 
-    VkShaderModule vertex_shader_module;
-    VkShaderModule fragment_shader_module;
-    VK_ASSERT(vkCreateShaderModule(vulkan->device, &vertex_shader_info, NULL,
-                                   &vertex_shader_module));
-    VK_ASSERT(vkCreateShaderModule(vulkan->device, &fragment_shader_info, NULL,
-                                   &fragment_shader_module));
-
-    free(vertex_shader_file.data);
-    free(fragment_shader_file.data);
-
-    VkPipelineShaderStageCreateInfo shader_stage_info[2] = { 0 };
-    shader_stage_info[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shader_stage_info[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    shader_stage_info[0].module = vertex_shader_module;
-    shader_stage_info[0].pName = "main";
-
-    shader_stage_info[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shader_stage_info[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    shader_stage_info[1].module = fragment_shader_module;
-    shader_stage_info[1].pName = "main";
-
-    VkVertexInputBindingDescription input_binding_desc = {
-        .binding = 0,
-        .stride = sizeof(Vertex),
-        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
-    };
-
-    VkVertexInputAttributeDescription input_attribut_descs[2] = { 0 };
-    input_attribut_descs[0].location = 0;
-    input_attribut_descs[0].binding = 0;
-    input_attribut_descs[0].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    input_attribut_descs[0].offset = offsetof(Vertex, color);
-
-    input_attribut_descs[1].location = 1;
-    input_attribut_descs[1].binding = 0;
-    input_attribut_descs[1].format = VK_FORMAT_R32G32_SFLOAT;
-    input_attribut_descs[1].offset = offsetof(Vertex, position);
-
-    VkPipelineVertexInputStateCreateInfo vertex_input_info = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        .vertexBindingDescriptionCount = 1,
-        .pVertexBindingDescriptions = &input_binding_desc,
-        .vertexAttributeDescriptionCount = ARRAY_SIZE(input_attribut_descs),
-        .pVertexAttributeDescriptions = input_attribut_descs,
-    };
-
-    VkPipelineInputAssemblyStateCreateInfo input_assembly = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-    };
-
-    VkViewport view_port = {
-        .width = (float)width,
-        .height = (float)height,
-    };
-    VkRect2D scissor = { 
-        .extent = {
-            .width = width,
-            .height = height,
-        }, 
-    };
-    VkPipelineViewportStateCreateInfo viewport_create_info = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-        .viewportCount = 1,
-        .pViewports = &view_port,
-        .scissorCount = 1,
-        .pScissors = &scissor,
-    };
-
-    VkPipelineRasterizationStateCreateInfo rasterization_create_info = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-        .polygonMode = VK_POLYGON_MODE_FILL,
-        .cullMode = VK_CULL_MODE_NONE,
-        .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
-        .depthBiasEnable = VK_TRUE,
-        .depthBiasConstantFactor = 1.0f,
-        .depthBiasClamp = 0.0f,
-        .depthBiasSlopeFactor = 1.0f,
-        .lineWidth = 1.0f,
-    };
-
-    VkPipelineDepthStencilStateCreateInfo depth_stencil_create_info = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-    };
-
-    VkPipelineColorBlendAttachmentState color_blend_attach = {
-        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
-        .blendEnable = VK_TRUE,
-        .colorBlendOp = VK_BLEND_OP_ADD,
-        .alphaBlendOp = VK_BLEND_OP_ADD,
-        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
-        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
-    };
-
-    VkPipelineColorBlendStateCreateInfo color_blend_info = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-        .logicOpEnable = VK_FALSE,
-        .logicOp = VK_LOGIC_OP_COPY,
-        .attachmentCount = 1,
-        .pAttachments = &color_blend_attach,
-    };
-
-#if 0
-    VkDescriptorSetLayoutBinding set_layout_binding = {
-        .binding = 0,
-        .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-    };
-
-    VkDescriptorSetLayoutCreateInfo desc_set_layout_info = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 1,
-        .pBindings = &set_layout_binding,
-    };
-
-    VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
-    vkCreateDescriptorSetLayout(vulkan->device, &desc_set_layout_info, NULL,
-                                &descriptor_set_layout);
-
-    VkPushConstantRange push_constant_range = {
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-        .size = sizeof(M4),
-    };
-
-    VkPipelineLayoutCreateInfo pipeline_layout_create_info = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 1,
-        .pSetLayouts = &descriptor_set_layout,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &push_constant_range,
-    };
-#else
-    VkPipelineLayoutCreateInfo pipeline_layout_create_info = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-    };
-#endif
-
-    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
-    vkCreatePipelineLayout(vulkan->device, &pipeline_layout_create_info, NULL,
-                           &pipeline_layout);
-
-    VkPipelineMultisampleStateCreateInfo multi_sample_state_create_info = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
-    };
-
-    VkGraphicsPipelineCreateInfo pipeline_create_info = {
-        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-        .stageCount = 2,
-        .pStages = shader_stage_info,
-        .pVertexInputState = &vertex_input_info,
-        .pInputAssemblyState = &input_assembly,
-        .pViewportState = &viewport_create_info,
-        .pRasterizationState = &rasterization_create_info,
-        .pMultisampleState = &multi_sample_state_create_info,
-        .pDepthStencilState = &depth_stencil_create_info,
-        .pColorBlendState = &color_blend_info,
-        .layout = pipeline_layout,
-        .renderPass = vulkan->render_pass,
-    };
-
-    VkPipeline pipeline = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateGraphicsPipelines(vulkan->device, VK_NULL_HANDLE, 1,
-                                        &pipeline_create_info, NULL, &pipeline));
-
-    vkDestroyShaderModule(vulkan->device, vertex_shader_module, NULL);
-    vkDestroyShaderModule(vulkan->device, fragment_shader_module, NULL);
-
-    vkDestroyPipelineLayout(vulkan->device, pipeline_layout, NULL);
-
-#if 0
-    vkDestroyDescriptorSetLayout(vulkan->device, descriptor_set_layout, NULL);
-#endif
-    return pipeline;
+    vulkan.swapchain_image_views =
+        (VkImageView*)calloc(vulkan.swapchain_image_count, sizeof(VkImageView));
+    vulkan.frame_buffers =
+        (VkFramebuffer*)calloc(vulkan.swapchain_image_count, sizeof(VkFramebuffer));
+    for (uint32_t i = 0; i < vulkan.swapchain_image_count; ++i)
+    {
+        vulkan.swapchain_image_views[i] =
+            vulkan_create_image_view(&vulkan, vulkan.swapchain_images[i]);
+        vulkan.frame_buffers[i] = vulkan_create_frame_buffer(
+            &vulkan, vulkan.swapchain_image_views[i], g_width, g_height);
+    }
+    return vulkan;
 }
 
-Buffer vulkan_create_buffer(const Vulkan* vulkan, VkBufferUsageFlags usage,
-                            uint32_t size_bytes, void* data)
+const char* game_dll_file_name = ".\\build\\bin\\game.dll";
+
+typedef struct GameUpdateAndRenderDLL
 {
+    HMODULE game_library_dll;
+    GameUpdateAndRender* game_update_and_render;
 
-    VkBufferCreateInfo buffer_create_info = {
-        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = size_bytes,
-        .usage = usage,
-        .queueFamilyIndexCount = 1,
-        .pQueueFamilyIndices = &vulkan->graphic_index
-    };
-    VkBuffer buffer = VK_NULL_HANDLE;
-    VK_ASSERT(vkCreateBuffer(vulkan->device, &buffer_create_info, NULL, &buffer));
+} GameUpdateAndRenderDLL;
 
-    VkPhysicalDeviceMemoryProperties memory_properties = { 0 };
-    vkGetPhysicalDeviceMemoryProperties(vulkan->physical_device, &memory_properties);
+GameUpdateAndRenderDLL load_game(void)
+{
+    GameUpdateAndRenderDLL result = { 0 };
 
-    VkMemoryPropertyFlags property_flags =
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    uint32_t index = 0;
-    for (uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i)
+    bool found = false;
+    CopyFile(game_dll_file_name, ".\\build\\bin\\game_load.dll", false);
+    result.game_library_dll = LoadLibrary("game_load.dll");
+    if (result.game_library_dll)
     {
-        if ((memory_properties.memoryTypes[i].propertyFlags & property_flags) ==
-            property_flags)
-        {
-            index = i;
-            break;
-        }
+        result.game_update_and_render = (GameUpdateAndRender*)GetProcAddress(
+            result.game_library_dll, "game_update_and_render");
+
+        found = result.game_update_and_render != NULL;
     }
-
-    VkMemoryRequirements memory_requirements;
-    vkGetBufferMemoryRequirements(vulkan->device, buffer, &memory_requirements);
-
-    VkMemoryAllocateInfo allocate_info = {
-        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        .allocationSize = memory_requirements.size,
-        .memoryTypeIndex = index,
-    };
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    VK_ASSERT(vkAllocateMemory(vulkan->device, &allocate_info, NULL, &memory));
-
-    vkBindBufferMemory(vulkan->device, buffer, memory, 0);
-
-    void* mapped_data = NULL;
-    vkMapMemory(vulkan->device, memory, 0, size_bytes, 0, &mapped_data);
-    memcpy(mapped_data, data, size_bytes);
-    vkUnmapMemory(vulkan->device, memory);
-
-    Buffer result = {
-        .buffer = buffer,
-        .size_in_bytes = size_bytes,
-        .memory = memory,
-    };
+    if (!found)
+    {
+        result.game_update_and_render = game_update_and_render_stub;
+    }
     return result;
 }
 
-Buffer vulkan_create_vertex_buffer(const Vulkan* vulkan, const VertexArray* array)
+void unload_game(GameUpdateAndRenderDLL* dll)
 {
-    VkBufferUsageFlagBits usage =
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    return vulkan_create_buffer(vulkan, usage, array->size * sizeof(Vertex),
-                                array->data);
+    if (dll->game_library_dll)
+    {
+        FreeLibrary(dll->game_library_dll);
+        dll->game_library_dll = NULL;
+    }
+    dll->game_update_and_render = game_update_and_render_stub;
 }
 
-Buffer vulkan_create_index_buffer(const Vulkan* vulkan, const IndexArray* array)
+FILETIME file_get_last_write_time(const char* file_name)
 {
-    VkBufferUsageFlagBits usage =
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    return vulkan_create_buffer(vulkan, usage, array->size * sizeof(uint32_t),
-                                array->data);
+    FILETIME result = {0};
+
+    WIN32_FIND_DATA find_data;
+    HANDLE handle = FindFirstFile(file_name, &find_data);
+    if(handle != INVALID_HANDLE_VALUE)
+    {
+        result = find_data.ftLastWriteTime;
+        FindClose(handle);
+    }
+    return result;
 }
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line,
@@ -910,79 +646,18 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line,
     {
         ShowWindow(window, show_cmd);
 
-        Vulkan vulkan = { 0 };
-        vulkan.instance = vulkan_create_instance();
-        vulkan.debug_messenger = vulkan_initialize_debug_messages(&vulkan);
-        PhysicalDeviceReturnValues pdrv = vulkan_get_physical_device(&vulkan);
-        vulkan.physical_device = pdrv.physical_device;
-        vulkan.graphic_index = pdrv.graphic_index;
-        vulkan.device = vulkan_create_device(&vulkan);
-        vulkan.command_pool = vulkan_creata_command_pool(&vulkan);
-        vulkan.command_buffer = vulkan_allocate_command_buffer(&vulkan);
-        vulkan.fence = vulkan_create_fence(&vulkan);
-        vulkan.wait_semaphore = vulkan_create_semaphore(&vulkan);
-        vulkan.signal_semaphore = vulkan_create_semaphore(&vulkan);
-
-        vulkan.surface = vulkan_create_surface(&vulkan, instance, window);
-        VkSurfaceFormatKHR surface_format = vulkan_get_surface_format(&vulkan);
-        vulkan.image_format = surface_format.format;
-        vulkan.swapchain =
-            vulkan_create_swapchain(&vulkan, surface_format.colorSpace);
-        SwapchainImageReturn swapchain_images = vulkan_get_swapchain_images(&vulkan);
-        vulkan.swapchain_images = swapchain_images.images;
-        vulkan.swapchain_image_count = swapchain_images.count;
-
-        vulkan.sample_count = VK_SAMPLE_COUNT_1_BIT;
-        vulkan.render_pass = vulkan_create_render_pass(&vulkan);
-
-        vulkan.swapchain_image_views =
-            (VkImageView*)calloc(vulkan.swapchain_image_count, sizeof(VkImageView));
-        vulkan.frame_buffers = (VkFramebuffer*)calloc(vulkan.swapchain_image_count,
-                                                      sizeof(VkFramebuffer));
-        for (uint32_t i = 0; i < vulkan.swapchain_image_count; ++i)
-        {
-            vulkan.swapchain_image_views[i] =
-                vulkan_create_image_view(&vulkan, vulkan.swapchain_images[i]);
-            vulkan.frame_buffers[i] = vulkan_create_frame_buffer(
-                &vulkan, vulkan.swapchain_image_views[i], g_width, g_height);
-        }
-
-        VertexBuffer vertex_buffer = { 0 };
-        array_create(&vertex_buffer.array, 10);
-
-        Vertex vertex = {
-            .color = v4i(1.0f),
-            .position = v2f(-0.5f, 0.5f),
-        };
-        array_append(&vertex_buffer.array, vertex);
-        vertex.position.x = 0.5f;
-        array_append(&vertex_buffer.array, vertex);
-        vertex.position.x = 0.0f;
-        vertex.position.y = -0.5f;
-        array_append(&vertex_buffer.array, vertex);
-
-        vertex_buffer.buffer =
-            vulkan_create_vertex_buffer(&vulkan, &vertex_buffer.array);
-
-        IndexBuffer index_buffer = { 0 };
-        array_create(&index_buffer.array, 10);
-        array_append(&index_buffer.array, 0);
-        array_append(&index_buffer.array, 1);
-        array_append(&index_buffer.array, 2);
-
-        index_buffer.buffer =
-            vulkan_create_index_buffer(&vulkan, &index_buffer.array);
-
-        VkPipeline graphic_pipeline = vulkan_create_graphic_pipeline(
-            &vulkan, "res/shaders/spv/shader.vert.spv",
-            "res/shaders/spv/shader.frag.spv", g_width, g_height);
-
+        Vulkan vulkan = vulkan_create(instance, window);
         VkQueue graphic_queue = VK_NULL_HANDLE;
         vkGetDeviceQueue(vulkan.device, vulkan.graphic_index, 0, &graphic_queue);
+
+        GameState game_state = { 0 };
 
         const double target_time = 0.016;
         double delta_time = target_time;
         double last_time = get_time();
+
+        GameUpdateAndRenderDLL game = load_game();
+        FILETIME last_dll_file_time = file_get_last_write_time(game_dll_file_name);
 
         g_running = true;
         while (g_running)
@@ -992,6 +667,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line,
             {
                 TranslateMessage(&message);
                 DispatchMessage(&message);
+            }
+
+            FILETIME new_dll_file_time = file_get_last_write_time(game_dll_file_name);
+            if(CompareFileTime(&last_dll_file_time, &new_dll_file_time))
+            {
+                unload_game(&game);
+                game = load_game();
+                last_dll_file_time = new_dll_file_time;
             }
 
             vkWaitForFences(vulkan.device, 1, &vulkan.fence, VK_TRUE, UINT64_MAX);
@@ -1038,17 +721,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line,
             };
             vkCmdBeginRenderPass(vulkan.command_buffer, &render_pass_begin_info, 0);
 
-            vkCmdBindPipeline(vulkan.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              graphic_pipeline);
-
-            VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(vulkan.command_buffer, 0, 1,
-                                   &vertex_buffer.buffer.buffer, &offset);
-            vkCmdBindIndexBuffer(vulkan.command_buffer, index_buffer.buffer.buffer,
-                                 0, VK_INDEX_TYPE_UINT32);
-
-            vkCmdDrawIndexed(vulkan.command_buffer, index_buffer.array.size, 1, 0, 0,
-                             0);
+            game.game_update_and_render(&game_state, &vulkan, delta_time, g_width,
+                                        g_height);
 
             vkCmdEndRenderPass(vulkan.command_buffer);
 
@@ -1086,10 +760,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line,
                 current_time = get_time();
                 delta_time = current_time - last_time;
             }
-
-            // output_debug_string("Delta: %f\n", delta_time);
-            // output_debug_string("Target: %f\n", target_time);
-
             last_time = current_time;
         }
     }
@@ -1101,6 +771,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line,
 }
 
 #ifdef SYNCOP_UNIT_BUILD
-#include "utils.c"
+// #include "utils.c"
+// #include "game.c"
 #endif
 
