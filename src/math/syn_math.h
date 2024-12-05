@@ -202,6 +202,7 @@ float v2_dot(V2 v1, V2 v2);
 float v3_dot(V3 v1, V3 v2);
 float v3_angle(V3 v1, V3 v2);
 V2 v2_normalize(V2 v2);
+V2 v2_normalize_len(V2 v2, float len);
 V3 v3_normalize(V3 v3);
 float v2_cross(V2 v1, V2 v2);
 V3 v3_cross(V3 v1, V3 v2);
@@ -690,7 +691,7 @@ long v4_more(V4 v1, V4 v2)
 
 float v2_len(V2 v2)
 {
-    return sqrtf((v2.x * v2.x) + (v2.y * v2.y));
+    return sqrtf(v2_dot(v2, v2));
 }
 
 float v2_len_squared(V2 v2)
@@ -737,7 +738,12 @@ float v3_angle(V3 v1, V3 v2)
 
 V2 v2_normalize(V2 v2)
 {
-    float inverse = 1 / sqrtf(v2_dot(v2, v2));
+    return v2_normalize_len(v2, v2_len(v2));
+}
+
+V2 v2_normalize_len(V2 v2, float len)
+{
+    float inverse = 1 / len;
     V2 out = v2_s_multi(v2, inverse);
     return out;
 }

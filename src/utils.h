@@ -7,6 +7,10 @@
 #define presist static
 #define internal static
 
+#define KILOBYTE(n) ((n) * 1024ULL)
+#define MEGABYTE(n) (KILOBYTE((n)) * 1024ULL)
+#define GIGABYTE(n) (MEGABYTE((n)) * 1024ULL)
+
 #define ASSERT(expression)                                                          \
     if (!(expression)) (*(uint32_t*)0 = 0)
 #define VK_ASSERT(function)                                                         \

@@ -615,11 +615,11 @@ void unload_game(GameUpdateAndRenderDLL* dll)
 
 FILETIME file_get_last_write_time(const char* file_name)
 {
-    FILETIME result = {0};
+    FILETIME result = { 0 };
 
     WIN32_FIND_DATA find_data;
     HANDLE handle = FindFirstFile(file_name, &find_data);
-    if(handle != INVALID_HANDLE_VALUE)
+    if (handle != INVALID_HANDLE_VALUE)
     {
         result = find_data.ftLastWriteTime;
         FindClose(handle);
@@ -659,18 +659,54 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line,
         GameUpdateAndRenderDLL game = load_game();
         FILETIME last_dll_file_time = file_get_last_write_time(game_dll_file_name);
 
+        KeyEvent key_event = { 0 };
+
         g_running = true;
         while (g_running)
         {
+            key_event.activated = false;
             MSG message;
             while (PeekMessage(&message, window, 0, 0, PM_REMOVE))
             {
-                TranslateMessage(&message);
-                DispatchMessage(&message);
+                switch (message.message)
+                {
+                    case WM_SYSKEYDOWN:
+                    case WM_KEYDOWN:
+                    {
+                        key_event.activated = true;
+                        key_event.key = (uint16_t)message.wParam;
+                        key_event.action = 1;
+                        key_event.alt_pressed = (message.lParam & (1 << 29));
+                        key_event.shift_pressed =
+                            (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+                        key_event.ctrl_pressed =
+                            (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+
+                        game_state.keys[key_event.key] = true;
+
+
+                        break;
+                    }
+                    case WM_SYSKEYUP:
+                    case WM_KEYUP:
+                    {
+                        key_event.activated = true;
+                        key_event.key = (uint16_t)message.wParam;
+                        key_event.action = 0;
+                        game_state.keys[key_event.key] = false;
+                        break;
+                    }
+                    default:
+                    {
+                        TranslateMessage(&message);
+                        DispatchMessage(&message);
+                    }
+                }
             }
 
-            FILETIME new_dll_file_time = file_get_last_write_time(game_dll_file_name);
-            if(CompareFileTime(&last_dll_file_time, &new_dll_file_time))
+            FILETIME new_dll_file_time =
+                file_get_last_write_time(game_dll_file_name);
+            if (CompareFileTime(&last_dll_file_time, &new_dll_file_time))
             {
                 unload_game(&game);
                 game = load_game();
@@ -721,6 +757,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line,
             };
             vkCmdBeginRenderPass(vulkan.command_buffer, &render_pass_begin_info, 0);
 
+            game_state.key_event = key_event;
             game.game_update_and_render(&game_state, &vulkan, delta_time, g_width,
                                         g_height);
 

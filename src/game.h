@@ -5,12 +5,30 @@
 #include <stdbool.h>
 #endif
 
+#include "event.h"
+
+typedef struct KeyEvent
+{
+    uint16_t key;
+    uint16_t action;
+    bool ctrl_pressed;
+    bool alt_pressed;
+    bool shift_pressed;
+    bool activated;
+} KeyEvent;
+
 typedef struct GameState
 {
     bool initialized;
+   
+    KeyEvent key_event;
+
+    bool keys[KEY_BUFFER_CAPACITY];
 
     VertexBuffer vertex_buffer;
+    VertexArray* vertices;
     IndexBuffer index_buffer;
+    IndexArray* indices;
     Buffer uniform_buffer;
 
     VkDescriptorSetLayout descriptor_set_layout;
@@ -20,9 +38,11 @@ typedef struct GameState
     VkPipelineLayout pipeline_layout;
     VkPipeline graphic_pipeline;
 
-    VP vp;
-    V3 position;
-    M4 model;
+    V2 position;
+    V2 velocity;
+    V2 acceleration; 
+
+    V2 cam_position;
 
 } GameState;
 

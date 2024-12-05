@@ -18,6 +18,12 @@ typedef struct ViewProjection
     M4 projection;
 } VP;
 
+typedef struct ModelView
+{
+    M4 model;
+    M4 view;
+} MV;
+
 typedef struct VertexArray
 {
     uint32_t size;
@@ -125,8 +131,8 @@ VkPipelineLayout vulkan_create_pipeline_layout(const Vulkan* vulkan, VkDescripto
 VkPipeline vulkan_create_graphic_pipeline(const Vulkan* vulkan, VkPipelineLayout pipeline_layout, const char* vertex_shader_file_name, const char* fragment_shader_file_name, uint32_t width, uint32_t height);
 
 Buffer vulkan_create_buffer(const Vulkan* vulkan, VkBufferUsageFlags usage, uint32_t size_bytes);
-Buffer vulkan_create_vertex_buffer(const Vulkan* vulkan, const VertexArray* array);
-Buffer vulkan_create_index_buffer(const Vulkan* vulkan, const IndexArray* array);
+Buffer vulkan_create_vertex_buffer(const Vulkan* vulkan, uint32_t size);
+Buffer vulkan_create_index_buffer(const Vulkan* vulkan, uint32_t size);
 Buffer vulkan_create_uniform_buffer(const Vulkan* vulkan);
 void vertex_buffer_copy_data(VertexBuffer* buffer);
 void index_buffer_copy_data(IndexBuffer* buffer);

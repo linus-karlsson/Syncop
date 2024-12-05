@@ -252,11 +252,11 @@ Buffer vulkan_create_buffer(const Vulkan* vulkan, VkBufferUsageFlags usage,
     return result;
 }
 
-Buffer vulkan_create_vertex_buffer(const Vulkan* vulkan, const VertexArray* array)
+Buffer vulkan_create_vertex_buffer(const Vulkan* vulkan, uint32_t size)
 {
     VkBufferUsageFlagBits usage =
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    uint32_t size_in_bytes = array->size * sizeof(Vertex);
+    uint32_t size_in_bytes = size * sizeof(Vertex);
     Buffer buffer = vulkan_create_buffer(vulkan, usage, size_in_bytes);
 
     vkMapMemory(vulkan->device, buffer.memory, 0, size_in_bytes, 0,
@@ -264,11 +264,11 @@ Buffer vulkan_create_vertex_buffer(const Vulkan* vulkan, const VertexArray* arra
     return buffer;
 }
 
-Buffer vulkan_create_index_buffer(const Vulkan* vulkan, const IndexArray* array)
+Buffer vulkan_create_index_buffer(const Vulkan* vulkan, uint32_t size)
 {
     VkBufferUsageFlagBits usage =
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    uint32_t size_in_bytes = array->size * sizeof(uint32_t);
+    uint32_t size_in_bytes = size * sizeof(uint32_t);
     Buffer buffer = vulkan_create_buffer(vulkan, usage, size_in_bytes);
 
     vkMapMemory(vulkan->device, buffer.memory, 0, size_in_bytes, 0,
@@ -373,6 +373,73 @@ vulkan_create_descriptor_set(const Vulkan* vulkan, VkDescriptorSetLayout set_lay
     return result;
 }
 
+void render_quad(VertexArray* array, V2 position, V2 size, V4 color)
+{
+    Vertex vertex = {
+        .color = color,
+        .position = position,
+    };
+    array_append(array, vertex);
+    vertex.position.x += size.x;
+    array_append(array, vertex);
+    vertex.position.y += size.y;
+    array_append(array, vertex);
+    vertex.position.x -= size.x;
+    array_append(array, vertex);
+}
+
+const uint32_t INDICES_TABLE[] = { 0, 1, 2, 2, 3, 0 };
+void render_quad_indices(IndexArray* array, uint32_t offset)
+{
+    for (uint32_t i = 0; i < ARRAY_SIZE(INDICES_TABLE); ++i)
+    {
+        array_append(array, INDICES_TABLE[i] + offset);
+    }
+}
+
+void render_quad_full(VertexArray* vertices, IndexArray* indices, V2 position,
+                      V2 size, V4 color)
+{
+    render_quad_indices(indices, vertices->size);
+    render_quad(vertices, position, size, color);
+}
+
+#include "tile_map.h"
+
+V2 update_character_velocity(const bool* keys, V2 old_velocity, float delta_time)
+{
+    V2 acceleration = v2d();
+    float speed = 2500.0f;
+    if (keys[SYNC_KEY_A])
+    {
+        acceleration.x = -1.0f;
+    }
+    if (keys[SYNC_KEY_W])
+    {
+        acceleration.y = 1.0f;
+    }
+    if (keys[SYNC_KEY_D])
+    {
+        acceleration.x = 1.0f;
+    }
+    if (keys[SYNC_KEY_S])
+    {
+        acceleration.y = -1.0f;
+    }
+    float len = v2_len(acceleration);
+    if(len > 0.1f)
+    {
+        acceleration = v2_normalize_len(acceleration, len);
+    }
+    return v2_add(v2_s_multi(v2_s_multi(acceleration, speed), delta_time),
+                  old_velocity);
+}
+
+V2 update_character_position(V2 old_position, V2 velocity, float delta_time)
+{
+    return v2_add(v2_s_multi(velocity, delta_time), old_position);
+}
+
 GAME_UPDATE_AND_RENDER(game_update_and_render)
 {
     if (!game_state->initialized)
@@ -386,30 +453,37 @@ GAME_UPDATE_AND_RENDER(game_update_and_render)
         game_state->descriptor_pool = descriptor_set_return.pool;
         game_state->descriptor_set = descriptor_set_return.set;
 
-        array_create(&game_state->vertex_buffer.array, 10);
+        game_state->vertices = &game_state->vertex_buffer.array;
+        game_state->indices = &game_state->index_buffer.array;
+        array_create(game_state->vertices, KILOBYTE(50) * 4);
+        array_create(game_state->indices, KILOBYTE(50) * 6);
 
-        Vertex vertex = {
-            .color = v4i(1.0f),
-            .position = v2f(-50.0f, -50.0f),
-        };
-        array_append(&game_state->vertex_buffer.array, vertex);
-        vertex.position.x = 50.0f;
-        array_append(&game_state->vertex_buffer.array, vertex);
-        vertex.position.x = 0.0f;
-        vertex.position.y = 50.0f;
-        array_append(&game_state->vertex_buffer.array, vertex);
+        V2 position = v2f((width - 30.0f) * 0.5f, (height - 30.0f) * 0.5f);
+        render_quad_full(game_state->vertices, game_state->indices, position,
+                         v2f(60.0f, 60.0f), v4ic(1.0f));
 
-        game_state->vertex_buffer.buffer =
-            vulkan_create_vertex_buffer(vulkan, &game_state->vertex_buffer.array);
+        const float tile_size = 60.0f;
+        for (int32_t i = ARRAY_SIZE(tile_map) - 1; i >= 0; --i)
+        {
+            for (uint32_t j = 0; j < ARRAY_SIZE(tile_map[0]); ++j)
+            {
+                V4 color = v4f(0.0f, 0.5f, 0.5f, 1.0f);
+                if (tile_map[i][j])
+                {
+                    color = v4f(0.5f, 0.5f, 0.0f, 1.0f);
+                }
+                render_quad_full(game_state->vertices, game_state->indices,
+                                 v2f(j * tile_size, i * tile_size), v2i(tile_size),
+                                 color);
+            }
+        }
+
+        game_state->vertex_buffer.buffer = vulkan_create_vertex_buffer(
+            vulkan, game_state->vertex_buffer.array.capacity);
         vertex_buffer_copy_data(&game_state->vertex_buffer);
 
-        array_create(&game_state->index_buffer.array, 10);
-        array_append(&game_state->index_buffer.array, 0);
-        array_append(&game_state->index_buffer.array, 1);
-        array_append(&game_state->index_buffer.array, 2);
-
-        game_state->index_buffer.buffer =
-            vulkan_create_index_buffer(vulkan, &game_state->index_buffer.array);
+        game_state->index_buffer.buffer = vulkan_create_index_buffer(
+            vulkan, game_state->index_buffer.array.capacity);
         index_buffer_copy_data(&game_state->index_buffer);
 
         game_state->pipeline_layout =
@@ -418,22 +492,40 @@ GAME_UPDATE_AND_RENDER(game_update_and_render)
             vulkan, game_state->pipeline_layout, "res/shaders/spv/shader.vert.spv",
             "res/shaders/spv/shader.frag.spv", width, height);
 
-        game_state->vp.view = m4d();
-        game_state->vp.projection = m4d();
-
-        game_state->position = v3d();
-        game_state->model = m4d();
+        game_state->position = v2d();
+        game_state->cam_position = v2d();
 
         game_state->initialized = true;
     }
 
-    game_state->position = v3f(170.0f, 100.0f, 0.0f);
-    game_state->model = m4_translate(game_state->position);
+    game_state->velocity = update_character_velocity(
+        game_state->keys, game_state->velocity, (float)delta_time);
 
-    game_state->vp.projection =
-        ortho(0, (float)width, (float)height, 0, -1.0f, 1.0f);
-    memcpy(game_state->uniform_buffer.mapped_data, &game_state->vp,
-           sizeof(game_state->vp));
+    game_state->velocity.x -= 8.0f * game_state->velocity.x * (float)delta_time;
+    game_state->velocity.y -= 8.0f * game_state->velocity.y * (float)delta_time;
+
+    game_state->position = update_character_position(
+        game_state->position, game_state->velocity, (float)delta_time);
+
+    V2 direction = v2d();
+    V2 neg_cam_position = v2_neg(game_state->cam_position);
+    float distance = v2_distance(neg_cam_position, game_state->position);
+    if (distance > 5.0f)
+    {
+        direction = v2_normalize(v2_sub(game_state->position, neg_cam_position));
+        float speed = distance * 3.7f;
+        direction = v2_s_multi(direction, speed);
+    }
+    v2_sub_equal(&game_state->cam_position,
+                 v2_s_multi(direction, (float)delta_time));
+
+    M4 model = m4_translate(v3_v2(game_state->position));
+
+    VP vp = { 0 };
+    vp.projection = ortho(0, (float)width, (float)height, 0, -1.0f, 1.0f);
+    vp.view = m4_translate(v3_v2(game_state->cam_position));
+
+    memcpy(game_state->uniform_buffer.mapped_data, &vp, sizeof(vp));
 
     vkCmdBindPipeline(vulkan->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                       game_state->graphic_pipeline);
@@ -442,10 +534,6 @@ GAME_UPDATE_AND_RENDER(game_update_and_render)
                             game_state->pipeline_layout, 0, 1,
                             &game_state->descriptor_set, 0, NULL);
 
-    vkCmdPushConstants(vulkan->command_buffer, game_state->pipeline_layout,
-                       VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(game_state->model),
-                       &game_state->model);
-
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(vulkan->command_buffer, 0, 1,
                            &game_state->vertex_buffer.buffer.buffer, &offset);
@@ -453,8 +541,18 @@ GAME_UPDATE_AND_RENDER(game_update_and_render)
                          game_state->index_buffer.buffer.buffer, 0,
                          VK_INDEX_TYPE_UINT32);
 
-    vkCmdDrawIndexed(vulkan->command_buffer, game_state->index_buffer.array.size, 1,
-                     0, 0, 0);
+    M4 static_model = m4d();
+    vkCmdPushConstants(vulkan->command_buffer, game_state->pipeline_layout,
+                       VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(static_model),
+                       &static_model);
+
+    vkCmdDrawIndexed(vulkan->command_buffer, game_state->index_buffer.array.size - 6,
+                     1, 6, 0, 0);
+
+    vkCmdPushConstants(vulkan->command_buffer, game_state->pipeline_layout,
+                       VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(model), &model);
+
+    vkCmdDrawIndexed(vulkan->command_buffer, 6, 1, 0, 0, 0);
 }
 
 #ifdef SYNCOP_UNIT_BUILD
