@@ -19,27 +19,6 @@
     }
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof(array[0]))
 
-#define array_create_d(array) array_create(array, 10)
-#define array_create(array, array_capacity)                                         \
-    do                                                                              \
-    {                                                                               \
-        (array)->size = 0;                                                          \
-        (array)->capacity = (array_capacity);                                       \
-        (array)->data = calloc((array_capacity), sizeof((*(array)->data)));         \
-    } while (0)
-
-#define array_append(array, value)                                                  \
-    do                                                                              \
-    {                                                                               \
-        if ((array)->size >= (array)->capacity)                                     \
-        {                                                                           \
-            (array)->capacity *= 2;                                                 \
-            (array)->data = realloc((array)->data,                                  \
-                                    (array)->capacity * sizeof((*(array)->data)));  \
-        }                                                                           \
-        (array)->data[(array)->size++] = (value);                                   \
-    } while (0)
-
 #define array_pop(array, result)                                                    \
     do                                                                              \
     {                                                                               \
@@ -52,6 +31,21 @@
         {                                                                           \
             *(result) = false;                                                      \
         }                                                                           \
+    } while (0)
+
+#define array_create(region, array, array_capacity, type)                           \
+    do                                                                              \
+    {                                                                               \
+        (array)->size = 0;                                                          \
+        (array)->capacity = (array_capacity);                                       \
+        (array)->data = region_allocate(region, (array_capacity), type);            \
+    } while (0)
+
+#define array_append(array, value)                                                  \
+    do                                                                              \
+    {                                                                               \
+        ASSERT((array)->size < (array)->capacity);                                  \
+        (array)->data[(array)->size++] = (value);                                   \
     } while (0)
 
 typedef struct FileData

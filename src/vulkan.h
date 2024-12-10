@@ -6,10 +6,14 @@
 #include "math/syn_math.h"
 #endif
 
+#include "region.h"
+
 typedef struct Vertex
 {
     V4 color;
     V2 position;
+    V2 texture_coordinates;
+    float texture_index;
 } Vertex;
 
 typedef struct ViewProjection
@@ -57,6 +61,16 @@ typedef struct IndexBuffer
     Buffer buffer;
     IndexArray array;
 } IndexBuffer;
+
+typedef struct Texture
+{
+    VkImage image;
+    VkDeviceMemory memory;
+    VkSampler sampler;
+    VkImageView image_view;
+    VkDeviceSize size_in_bytes;
+    void* mapped_data;
+} Texture;
 
 typedef struct Vulkan
 {
@@ -110,19 +124,18 @@ VkDebugUtilsMessengerEXT vulkan_initialize_debug_messages(const Vulkan* vulkan);
 PhysicalDeviceReturnValues vulkan_get_physical_device(const Vulkan* vulkan);
 VkDevice vulkan_create_device(const Vulkan* vulkan);
 
-VkCommandPool vulkan_creata_command_pool(const Vulkan* vulkan);
+VkCommandPool vulkan_create_command_pool(const Vulkan* vulkan);
 VkCommandBuffer vulkan_allocate_command_buffer(const Vulkan* vulkan);
 
 VkFence vulkan_create_fence(const Vulkan* vulkan);
 VkSemaphore vulkan_create_semaphore(const Vulkan* vulkan);
 
-VkSurfaceKHR vulkan_create_surface(const Vulkan* vulkan, void* instance, void* window);
 VkSurfaceFormatKHR vulkan_get_surface_format(const Vulkan* vulkan);
 VkSwapchainKHR vulkan_create_swapchain(const Vulkan* vulkan, VkColorSpaceKHR color_space);
 
 SwapchainImageReturn vulkan_get_swapchain_images(const Vulkan* vulkan);
 
-VkImageView vulkan_create_image_view(const Vulkan* vulkan, VkImage image);
+VkImageView vulkan_create_image_view(const Vulkan* vulkan, VkImage image, VkFormat image_format);
 
 VkRenderPass vulkan_create_render_pass(const Vulkan* vulkan);
 VkFramebuffer vulkan_create_frame_buffer(const Vulkan* vulkan, VkImageView image_view, uint32_t width, uint32_t height);
@@ -130,12 +143,12 @@ VkFramebuffer vulkan_create_frame_buffer(const Vulkan* vulkan, VkImageView image
 VkPipelineLayout vulkan_create_pipeline_layout(const Vulkan* vulkan, VkDescriptorSetLayout descriptor_set_layout);
 VkPipeline vulkan_create_graphic_pipeline(const Vulkan* vulkan, VkPipelineLayout pipeline_layout, const char* vertex_shader_file_name, const char* fragment_shader_file_name, uint32_t width, uint32_t height);
 
-Buffer vulkan_create_buffer(const Vulkan* vulkan, VkBufferUsageFlags usage, uint32_t size_bytes);
+Buffer vulkan_create_buffer(const Vulkan* vulkan, VkMemoryPropertyFlags property_flags, VkBufferUsageFlags usage, uint32_t size_bytes);
 Buffer vulkan_create_vertex_buffer(const Vulkan* vulkan, uint32_t size);
 Buffer vulkan_create_index_buffer(const Vulkan* vulkan, uint32_t size);
 Buffer vulkan_create_uniform_buffer(const Vulkan* vulkan);
 void vertex_buffer_copy_data(VertexBuffer* buffer);
 void index_buffer_copy_data(IndexBuffer* buffer);
 
-VkDescriptorSetLayout vulkan_create_descriptor_set_layout(const Vulkan* vulkan);
-CreateDescriptorSetReturn vulkan_create_descriptor_set(const Vulkan* vulkan, VkDescriptorSetLayout set_layout, const Buffer* uniform_buffer);
+VkDescriptorSetLayout vulkan_create_descriptor_set_layout(const Vulkan* vulkan, uint32_t texture_count);
+CreateDescriptorSetReturn vulkan_create_descriptor_set(Region* region, const Vulkan* vulkan, VkDescriptorSetLayout set_layout, const Texture* textures, uint32_t texture_count, const Buffer* uniform_buffer);

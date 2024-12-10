@@ -54,6 +54,11 @@ LRESULT CALLBACK window_procedure(HWND window, UINT message, WPARAM w_param,
     return result;
 }
 
+REGION_CREATE(windows_allocation)
+{
+    return VirtualAlloc(0, capacity, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+}
+
 double get_time(void)
 {
     struct timespec now;
@@ -290,7 +295,7 @@ VkDevice vulkan_create_device(const Vulkan* vulkan)
     return device;
 }
 
-VkCommandPool vulkan_creata_command_pool(const Vulkan* vulkan)
+VkCommandPool vulkan_create_command_pool(const Vulkan* vulkan)
 {
     VkCommandPoolCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -302,21 +307,6 @@ VkCommandPool vulkan_creata_command_pool(const Vulkan* vulkan)
     VK_ASSERT(
         vkCreateCommandPool(vulkan->device, &create_info, NULL, &command_pool));
     return command_pool;
-}
-
-VkCommandBuffer vulkan_allocate_command_buffer(const Vulkan* vulkan)
-{
-    VkCommandBufferAllocateInfo allocate_info = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = vulkan->command_pool,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
-    };
-
-    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
-    VK_ASSERT(
-        vkAllocateCommandBuffers(vulkan->device, &allocate_info, &command_buffer));
-    return command_buffer;
 }
 
 VkFence vulkan_create_fence(const Vulkan* vulkan)
@@ -427,34 +417,6 @@ SwapchainImageReturn vulkan_get_swapchain_images(const Vulkan* vulkan)
     return result;
 }
 
-VkImageView vulkan_create_image_view(const Vulkan* vulkan, VkImage image)
-{
-    VkComponentMapping component_mapping = {
-        .r = VK_COMPONENT_SWIZZLE_R,
-        .g = VK_COMPONENT_SWIZZLE_G,
-        .b = VK_COMPONENT_SWIZZLE_B,
-        .a = VK_COMPONENT_SWIZZLE_A,
-    };
-
-    VkImageSubresourceRange sub_range = {
-        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-        .levelCount = 1,
-        .layerCount = 1,
-    };
-
-    VkImageViewCreateInfo create_info = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image = image,
-        .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = vulkan->image_format,
-        .components = component_mapping,
-        .subresourceRange = sub_range,
-    };
-
-    VkImageView image_view = VK_NULL_HANDLE;
-    vkCreateImageView(vulkan->device, &create_info, NULL, &image_view);
-    return image_view;
-}
 
 VkRenderPass vulkan_create_render_pass(const Vulkan* vulkan)
 {
@@ -542,7 +504,7 @@ Vulkan vulkan_create(HINSTANCE instance, HWND window)
     vulkan.physical_device = pdrv.physical_device;
     vulkan.graphic_index = pdrv.graphic_index;
     vulkan.device = vulkan_create_device(&vulkan);
-    vulkan.command_pool = vulkan_creata_command_pool(&vulkan);
+    vulkan.command_pool = vulkan_create_command_pool(&vulkan);
     vulkan.command_buffer = vulkan_allocate_command_buffer(&vulkan);
     vulkan.fence = vulkan_create_fence(&vulkan);
     vulkan.wait_semaphore = vulkan_create_semaphore(&vulkan);
@@ -566,7 +528,7 @@ Vulkan vulkan_create(HINSTANCE instance, HWND window)
     for (uint32_t i = 0; i < vulkan.swapchain_image_count; ++i)
     {
         vulkan.swapchain_image_views[i] =
-            vulkan_create_image_view(&vulkan, vulkan.swapchain_images[i]);
+            vulkan_create_image_view(&vulkan, vulkan.swapchain_images[i], vulkan.image_format);
         vulkan.frame_buffers[i] = vulkan_create_frame_buffer(
             &vulkan, vulkan.swapchain_image_views[i], g_width, g_height);
     }
@@ -661,6 +623,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line,
 
         KeyEvent key_event = { 0 };
 
+        game_state.region = region_create(MEGABYTE(64), windows_allocation);
+
         g_running = true;
         while (g_running)
         {
@@ -682,7 +646,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line,
                         key_event.ctrl_pressed =
                             (GetKeyState(VK_CONTROL) & 0x8000) != 0;
 
-                        game_state.keys[key_event.key] = true;
+                        if(key_event.key < KEY_BUFFER_CAPACITY)
+                        {
+                            game_state.keys[key_event.key] = true;
+                        }
 
 
                         break;
@@ -693,7 +660,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line,
                         key_event.activated = true;
                         key_event.key = (uint16_t)message.wParam;
                         key_event.action = 0;
-                        game_state.keys[key_event.key] = false;
+                        if(key_event.key < KEY_BUFFER_CAPACITY)
+                        {
+                            game_state.keys[key_event.key] = false;
+                        }
                         break;
                     }
                     default:
@@ -757,9 +727,16 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line,
             };
             vkCmdBeginRenderPass(vulkan.command_buffer, &render_pass_begin_info, 0);
 
-            game_state.key_event = key_event;
             game.game_update_and_render(&game_state, &vulkan, delta_time, g_width,
                                         g_height);
+
+            static uint32_t value = 0;
+
+            if(value++ == 60)
+            {
+                output_debug_string("(x: %u, y: %u)\n", game_state.index.x, game_state.index.y);
+                value = 0;
+            }
 
             vkCmdEndRenderPass(vulkan.command_buffer);
 
@@ -808,7 +785,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line,
 }
 
 #ifdef SYNCOP_UNIT_BUILD
-// #include "utils.c"
-// #include "game.c"
+#include "region.c"
+#include "vulkan.c"
 #endif
 

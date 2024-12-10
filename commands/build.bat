@@ -7,7 +7,7 @@ set OutputPath=-Fo"build/"
 set OutputFile=-Fe"build/bin/Syncop" 
 set Libraries=vulkan-1.lib user32.lib Winmm.lib
 set Files=./src/main.c
-set IncludeDirs=-I./src -IC:/VulkanSDK/1.3.283.0/Include 
+set IncludeDirs=-I./src -I./vendor -IC:/VulkanSDK/1.3.283.0/Include 
 set LibraryDirs=/LIBPATH:"C:/VulkanSDK/1.3.283.0/Lib" /LIBPATH:./build
 
 IF NOT EXIST build/bin mkdir build\bin
