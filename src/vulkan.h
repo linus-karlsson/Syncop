@@ -68,7 +68,10 @@ typedef struct Texture
     VkDeviceMemory memory;
     VkSampler sampler;
     VkImageView image_view;
-    VkDeviceSize size_in_bytes;
+
+    uint32_t width;
+    uint32_t height;
+
     void* mapped_data;
 } Texture;
 

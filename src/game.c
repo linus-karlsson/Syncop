@@ -372,8 +372,8 @@ void vulkan_end_temporary_command_buffer(const Vulkan* vulkan,
     vkFreeCommandBuffers(vulkan->device, vulkan->command_pool, 1, &command_buffer);
 }
 
-Texture vulkan_create_texture(const Vulkan* vulkan, uint32_t width, uint32_t height,
-                              const void* data)
+Texture vulkan_create_texture(const Vulkan* vulkan, VkFilter filter, uint32_t width,
+                              uint32_t height, const void* data)
 {
     VkImage image = vulkan_create_image(vulkan, width, height);
     VkMemoryRequirements memory_requirements;
@@ -433,7 +433,7 @@ Texture vulkan_create_texture(const Vulkan* vulkan, uint32_t width, uint32_t hei
         vkDestroyBuffer(vulkan->device, staging_buffer.buffer, NULL);
     }
 
-    VkSampler sampler = vulkan_create_sampler(vulkan, VK_FILTER_LINEAR);
+    VkSampler sampler = vulkan_create_sampler(vulkan, filter);
 
     VkImageView image_view =
         vulkan_create_image_view(vulkan, image, VK_FORMAT_R8G8B8A8_SRGB);
@@ -443,12 +443,14 @@ Texture vulkan_create_texture(const Vulkan* vulkan, uint32_t width, uint32_t hei
         .memory = memory,
         .sampler = sampler,
         .image_view = image_view,
-        .size_in_bytes = memory_requirements.size,
+        .width = width,
+        .height = height,
     };
     return texture;
 }
 
-Texture vulkan_create_texture_path(const Vulkan* vulkan, const char* file_path)
+Texture vulkan_create_texture_path(const Vulkan* vulkan, VkFilter filter,
+                                   const char* file_path)
 {
     int32_t width = 0;
     int32_t height = 0;
@@ -456,7 +458,8 @@ Texture vulkan_create_texture_path(const Vulkan* vulkan, const char* file_path)
     uint8_t* tex_buffer =
         stbi_load(file_path, &width, &height, &channels, STBI_rgb_alpha);
 
-    Texture result = vulkan_create_texture(vulkan, width, height, tex_buffer);
+    Texture result =
+        vulkan_create_texture(vulkan, filter, width, height, tex_buffer);
     stbi_image_free(tex_buffer);
     return result;
 }
@@ -633,23 +636,26 @@ CreateDescriptorSetReturn vulkan_create_descriptor_set(
     return result;
 }
 
-void render_quad(VertexArray* array, V2 position, V2 size, V4 color, float texture_index)
+void render_quad_co(VertexArray* array, V2 position, V2 size, V4 color,
+                    float texture_index, V2 top_left_coordinates,
+                    V2 bottom_right_coordinates)
 {
     Vertex vertex = {
         .color = color,
         .position = position,
-        .texture_coordinates = v2f(0.0f, 1.0f),
+        .texture_coordinates =
+            v2f(top_left_coordinates.x, bottom_right_coordinates.y),
         .texture_index = texture_index,
     };
     array_append(array, vertex);
     vertex.position.x += size.x;
-    vertex.texture_coordinates.x = 1.0f;
+    vertex.texture_coordinates.x = bottom_right_coordinates.x;
     array_append(array, vertex);
     vertex.position.y += size.y;
-    vertex.texture_coordinates.y = 0.0f;
+    vertex.texture_coordinates.y = top_left_coordinates.y;
     array_append(array, vertex);
     vertex.position.x -= size.x;
-    vertex.texture_coordinates.x = 0.0f;
+    vertex.texture_coordinates.x = top_left_coordinates.x;
     array_append(array, vertex);
 }
 
@@ -666,7 +672,7 @@ void render_quad_full(VertexArray* vertices, IndexArray* indices, V2 position,
                       V2 size, V4 color, float texture_index)
 {
     render_quad_indices(indices, vertices->size);
-    render_quad(vertices, position, size, color, texture_index);
+    render_quad_co(vertices, position, size, color, texture_index, v2d(), v2i(1.0f));
 }
 
 #include "tile_map.h"
@@ -739,9 +745,10 @@ GAME_UPDATE_AND_RENDER(game_update_and_render)
             region_allocate(&game_state->region, texture_count, Texture);
 
         uint32_t white_color = UINT32_MAX;
-        game_state->textures[0] = vulkan_create_texture(vulkan, 1, 1, &white_color);
-        game_state->textures[1] =
-            vulkan_create_texture_path(vulkan, "res/dude/dude_idle_sheet.png");
+        game_state->textures[0] =
+            vulkan_create_texture(vulkan, VK_FILTER_NEAREST, 1, 1, &white_color);
+        game_state->textures[1] = vulkan_create_texture_path(
+            vulkan, VK_FILTER_NEAREST, "res/dude/dude_idle_sheet.png");
 
         CreateDescriptorSetReturn descriptor_set_return =
             vulkan_create_descriptor_set(
@@ -760,9 +767,8 @@ GAME_UPDATE_AND_RENDER(game_update_and_render)
         array_create(&game_state->region, game_state->indices, KILOBYTE(50) * 6,
                      uint32_t);
 
-        V2 position = v2d();
-        render_quad_full(game_state->vertices, game_state->indices, position,
-                         v2f(96.0f * 4.0f, 32.0f * 4.0f), v4ic(1.0f), 1.0f);
+        render_quad_indices(game_state->indices, game_state->vertices->size);
+        game_state->vertices->size = 4;
 
         for (int32_t i = ARRAY_SIZE(tile_map) - 1; i >= 0; --i)
         {
@@ -797,6 +803,44 @@ GAME_UPDATE_AND_RENDER(game_update_and_render)
         game_state->cam_position = v2d();
 
         game_state->initialized = true;
+    }
+
+    {
+        game_state->vertex_buffer.array.size = 0;
+
+
+        float texture_width = (float)game_state->textures[1].width;
+        float texture_height = (float)game_state->textures[1].height;
+
+        float sprite_width = 32;
+        float sprite_height = 32;
+
+        uint32_t x_indices = (uint32_t)(texture_width / sprite_width);
+        uint32_t y_indices = (uint32_t)(texture_height / sprite_height);
+        float fraction_per_sprite = 1.0f / (float)x_indices;
+
+        static uint32_t index = 0;
+
+        static double time = 0;
+        time += delta_time;
+        if(time >= 0.2f)
+        {
+            index = (index + 1) % x_indices;
+            time = 0.0f;
+        }
+
+        V2 top_left = v2d();
+        V2 bottom_right = v2f(0.0f, 1.0f);
+
+        top_left.x = index * fraction_per_sprite;
+        bottom_right.x = top_left.x + fraction_per_sprite;
+
+        V2 position = v2d();
+        render_quad_co(game_state->vertices, position,
+                       v2f(sprite_width * 2.0f, sprite_height * 2.0f), v4ic(1.0f),
+                       1.0f, top_left, bottom_right);
+
+        vertex_buffer_copy_data(&game_state->vertex_buffer);
     }
 
     game_state->velocity = update_character_velocity(
